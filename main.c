@@ -1,50 +1,59 @@
-#include "proxy.h"
+#include "bridge.h"
 
-#include <stdbool.h>
+#include <signal.h>
+
+static volatile bool terminated = 0;
+
+void sigint_cb(int sig) {
+  if (!terminated) {
+    terminated = 1;
+  }
+}
+
+static void signals_init(void) {
+  struct sigaction sa_hup;
+  memset(&sa_hup, 0, sizeof(sa_hup));
+  sa_hup.sa_handler = sigint_cb;
+  sa_hup.sa_flags = SA_RESTART;
+  sigaction(SIGINT, &sa_hup, 0);
+}
 
 int main(int argc, const char** argv) {
   if (argc < 3) {
-    fprintf(stderr, "Usage: l2bridge <if1> <if2>\n");
+    fprintf(stderr, "Usage: bridge_l2 <if1> <if2>\n");
     return 1;
   }
 
   if (geteuid() != 0) {
-    fprintf(stderr, "bummer: You must be root!\n");
+    fprintf(stderr, "You must be root!\n");
     return 1;
   }
 
-  // Open the pipes on the two interfaces
-  const char* ifn0 = argv[1];
-  const char* ifn1 = argv[2];
-  if (!strcmp(ifn0, ifn1)) {
-    fprintf(stderr, "bummer: You are kidding right?\n");
+  const char* inter_0 = argv[1];
+  const char* inter_1 = argv[2];
+  if (!strcmp(inter_0, inter_1)) {
+    fprintf(stderr, "Interfaces must not equal. %s == %s \n", inter_0, inter_1);
     return 1;
   }
 
-  const char* ifns[2] = {ifn0, ifn1};
-  struct pipe_t* p1 = pipe_init(ifns[0], 1);
-  struct pipe_t* p2 = pipe_init(ifns[1], 1);
-  if (pipe_open(p1) < 0 || pipe_open(p2) < 0)
+  signals_init();
+
+  struct bridge_t bridge;
+  bridge_init(&bridge, inter_0, inter_1, 1);
+
+  int res = bridge_open(&bridge);
+  if (res == -1) {
+    fprintf(stderr, "Bridge can't open.\n");
     return 1;
-
-  struct pipe_t* pipes[2] = {p1, p2};
-  uint8_t bytes[64 * 1024];
-  uint64_t counts[2] = {0, 0};
-
-  printf("bridging %s <=> %s\n", p1->ifname, p2->ifname);
-
-  // And bridge them. Packet in on 0, out on 1 and vice-versa
-  while (true) {
-    for (size_t n = 0; n < 2; ++n) {
-      enum type_pac_t type_pac;
-      int nread = pipe_read(pipes[n], bytes, sizeof(bytes), &type_pac);
-      if (nread <= 0 || type_pac == HOST) {
-        continue;
-      }
-      pipe_write(pipes[1 - n], bytes, nread);
-      counts[n] += nread;
-    }
   }
+
+  printf("bridging %s <=> %s\n", inter_0, inter_1);
+
+  bridge_run(&bridge);
+  while (!terminated) {
+    sleep(1);
+  }
+  bridge_close(&bridge);
 
   return 0;
 }

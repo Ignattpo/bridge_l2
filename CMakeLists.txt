@@ -8,6 +8,11 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${PROJECT_SOURCE_DIR}/")
 
 find_package(PCAP REQUIRED)
 
-add_executable(bridge_l2 main.c proxy.c proxy.h)
+add_executable(bridge_l2
+    main.c
+    bridge.c
+    bridge.h)
 
-target_link_libraries(bridge_l2 PUBLIC ${PCAP_LIBRARY})
+target_link_libraries(bridge_l2
+    PUBLIC ${PCAP_LIBRARY}
+    PUBLIC pthread)
