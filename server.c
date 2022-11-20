@@ -24,14 +24,15 @@ static void* sendto_thread(void* thread_data) {
       continue;
     }
     if (bytes_count == -1) {
-      fprintf(stderr, "Can't read interface %s\n", server->inter.name);
+      fprintf(stderr, "ERROR> %s can't read interface %s\n", __FUNCTION__,
+              server->inter.name);
       continue;
     }
 
     int res = sendto(server->socket, buffer, bytes_count, 0,
                      (struct sockaddr*)&server->src_addr, server->addr_len);
     if (res == -1) {
-      fprintf(stderr, "Can't send addr %s:%d\n",
+      fprintf(stderr, "ERROR> %s can't send addr %s:%d\n", __FUNCTION__,
               inet_ntoa(server->src_addr.sin_addr), server->src_addr.sin_port);
     }
   }
@@ -51,17 +52,19 @@ static void* recv_thread(void* thread_data) {
     ssize_t bytes_count = recvfrom(server->socket, buffer, buffer_size, 0,
                                    (struct sockaddr*)&src_addr, &addrlen);
     if (bytes_count == -1) {
-      fprintf(stderr, "Can't recvfrom\n");
+      fprintf(stderr, "ERROR> %s can't recvfrom\n", __FUNCTION__);
       continue;
     }
     if (memcmp(&src_addr, (struct sockaddr*)&server->src_addr, addrlen)) {
-      fprintf(stderr, "ERROR> package incorrect source address\n");
+      fprintf(stderr, "ERROR> %s package incorrect source address\n",
+              __FUNCTION__);
       continue;
     }
 
     int res = inter_write(&server->inter, buffer, buffer_size);
     if (res == -1) {
-      fprintf(stderr, "Can't write interface %s\n", server->inter.name);
+      fprintf(stderr, "ERROR> %s can't write interface %s\n", __FUNCTION__,
+              server->inter.name);
     }
   }
 
@@ -80,7 +83,7 @@ static void* wait_for_client_thread(void* thread_data) {
   ssize_t bytes_count = recvfrom(server->socket, buffer, buffer_size, 0,
                                  (struct sockaddr*)&src_addr, &addrlen);
   if (bytes_count == -1) {
-    fprintf(stderr, "wait_for_client_thread Can't recvfrom\n");
+    fprintf(stderr, "ERROR> %s can't recvfrom\n", __FUNCTION__);
     return 0;
   }
 
@@ -89,17 +92,18 @@ static void* wait_for_client_thread(void* thread_data) {
 
   int res = inter_write(&server->inter, buffer, buffer_size);
   if (res == -1) {
-    fprintf(stderr, "Can't write interface %s\n", server->inter.name);
+    fprintf(stderr, "ERROR> %s can't write interface %s\n", __FUNCTION__,
+            server->inter.name);
   }
 
   res = pthread_create(&server->recv_thread, NULL, recv_thread, server);
   if (res != 0) {
-    fprintf(stderr, "Can't write interface %s\n", server->inter.name);
+    fprintf(stderr, "ERROR> %s pthread_create recv_thread\n", __FUNCTION__);
   }
 
   res = pthread_create(&server->send_thread, NULL, sendto_thread, server);
   if (res != 0) {
-    fprintf(stderr, "Can't write interface %s\n", server->inter.name);
+    fprintf(stderr, "ERROR> %s pthread_create sendto_thread\n", __FUNCTION__);
   }
 
   return 0;
@@ -115,13 +119,13 @@ struct server_t* server_init(const char* inter_name,
 
   struct hostent* hosten = gethostbyname(name_addr);
   if (!hosten) {
-    perror("server_init gethostbyname");
+    fprintf(stderr, "ERROR> %s gethostbyname", __FUNCTION__);
     return NULL;
   }
 
   struct in_addr** addr_list = (struct in_addr**)hosten->h_addr_list;
   if (addr_list[0] == NULL) {
-    fprintf(stderr, "server_init incorrect addres %s\n", name_addr);
+    fprintf(stderr, "ERROR> %s incorrect addres %s\n", __FUNCTION__, name_addr);
     return NULL;
   }
 
@@ -133,13 +137,13 @@ struct server_t* server_init(const char* inter_name,
   int res =
       bind(server_socket, (struct sockaddr*)&sock_addr, sizeof(sock_addr));
   if (res != 0) {
-    fprintf(stderr, "server_init bind");
+    fprintf(stderr, "ERROR> %s bind", __FUNCTION__);
     goto aborting;
   }
 
   struct server_t* server = malloc(sizeof(*server));
   if (!server) {
-    fprintf(stderr, "server_init malloc %s\n", name_addr);
+    fprintf(stderr, "ERROR> %s malloc %s\n", __FUNCTION__, name_addr);
     goto aborting;
   }
 
@@ -167,8 +171,8 @@ int server_run(struct server_t* server) {
   int res = pthread_create(&server->wait_thread, NULL, wait_for_client_thread,
                            server);
   if (res != 0) {
-    fprintf(stderr, "ERROR> server_run pthread_create addres: %s port: %d \n",
-            server->name_addr, server->port);
+    fprintf(stderr, "ERROR> %s pthread_create wait_for_client_thread",
+            __FUNCTION__);
   }
 
   return 0;

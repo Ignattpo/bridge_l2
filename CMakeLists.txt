@@ -10,8 +10,14 @@ find_package(PCAP REQUIRED)
 
 add_executable(bridge_l2
     main.c
-    bridge.c
-    bridge.h)
+    local.c
+    local.h
+    client.c
+    client.h
+    server.c
+    server.h
+    interface.c
+    interface.h)
 
 target_link_libraries(bridge_l2
     PUBLIC ${PCAP_LIBRARY}

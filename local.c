@@ -24,13 +24,15 @@ void* inter_swap_ptk(void* thread_data) {
       continue;
     }
     if (bytes_count == -1) {
-      fprintf(stderr, "Can't read interface %s\n", inter_0->name);
+      fprintf(stderr, "ERROR> %s can't read interface %s\n", __FUNCTION__,
+              inter_0->name);
       continue;
     }
 
     int res = inter_write(inter_1, buffer, bytes_count);
     if (res == -1) {
-      fprintf(stderr, "Can't write interface %s\n", inter_1->name);
+      fprintf(stderr, "ERROR> %s can't write interface %s\n", __FUNCTION__,
+              inter_1->name);
     }
   }
 
@@ -42,7 +44,7 @@ struct local_bridge_t* local_bridge_new(const char* ifname_0,
                                         clock_t timeout) {
   struct local_bridge_t* bridge = malloc(sizeof(*bridge));
   if (!bridge) {
-    fprintf(stderr, "Can't malloc bridge\n");
+    fprintf(stderr, "ERROR> %s malloc\n", __FUNCTION__);
     return NULL;
   }
 
@@ -69,12 +71,14 @@ int local_bridge_open(struct local_bridge_t* bridge) {
   int res = 0;
   res = inter_open(&bridge->inter_0);
   if (res == -1) {
-    fprintf(stderr, "Can't open interface %s\n", bridge->inter_0.name);
+    fprintf(stderr, "ERROR> %s can't open interface %s\n", __FUNCTION__,
+            bridge->inter_0.name);
     return -1;
   }
   res = inter_open(&bridge->inter_1);
   if (res == -1) {
-    fprintf(stderr, "Can't open interface %s\n", bridge->inter_1.name);
+    fprintf(stderr, "ERROR> %s can't open interface %s\n", __FUNCTION__,
+            bridge->inter_1.name);
     return -1;
   }
 

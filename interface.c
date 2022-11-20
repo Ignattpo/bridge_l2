@@ -52,19 +52,22 @@ int inter_open(struct interface_bridge_t* inter) {
   }
 
   if (get_mac(inter) < 0) {
-    fprintf(stderr, "Can't get mac for %s\n", inter->name);
+    fprintf(stderr, "ERROR> %s can't get mac for %s\n", __FUNCTION__,
+            inter->name);
     return -1;
   }
 
   char eb[PCAP_ERRBUF_SIZE];
   inter->pcap = pcap_open_live(inter->name, 65535, 1, inter->timeout, eb);
   if (inter->pcap == 0) {
-    fprintf(stderr, "pcap_open_live(%s) failed\n\t %s\n", inter->name, eb);
+    fprintf(stderr, "ERROR> %s pcap_open_live(%s) failed\n\t %s\n",
+            __FUNCTION__, inter->name, eb);
     return -1;
   }
 
   if (pcap_setdirection(inter->pcap, PCAP_D_IN) < 0) {
-    fprintf(stderr, "pcap_set_direction(%s) failed\n", inter->name);
+    fprintf(stderr, "ERROR> %s pcap_setdirection(%s) failed\n", __FUNCTION__,
+            inter->name);
     goto aborting;
   }
 
