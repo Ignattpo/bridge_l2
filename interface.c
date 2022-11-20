@@ -1,17 +1,19 @@
+#include "interface.h"
+
 #include <net/if.h>
+#include <string.h>
 #include <sys/ioctl.h>
+#include <unistd.h>
 
-#include "bridge.h"
-
-static void inter_init(struct interface_bridge_t* inter,
-                       const char* ifname,
-                       clock_t timeout) {
+void inter_init(struct interface_bridge_t* inter,
+                const char* ifname,
+                clock_t timeout) {
   strcpy(inter->name, ifname);
   inter->timeout = timeout;
   inter->pcap = NULL;
 }
 
-static void inter_close(struct interface_bridge_t* inter) {
+void inter_close(struct interface_bridge_t* inter) {
   if (inter->pcap) {
     pcap_close(inter->pcap);
     inter->pcap = NULL;
@@ -126,81 +128,4 @@ int inter_write(struct interface_bridge_t* inter,
   }
 
   return 0;
-}
-
-void* inter_swap_ptk(void* thread_data) {
-  struct bridge_tunnel_t* tunnel = thread_data;
-  struct interface_bridge_t* inter_0 = tunnel->inter_0;
-  struct interface_bridge_t* inter_1 = tunnel->inter_1;
-
-  enum type_pkt_t type_pkt = UNKNOWN;
-  uint8_t buffer[64 * 1024];
-  size_t buffer_size = sizeof(buffer);
-  while (*tunnel->terminated) {
-    int bytes_count = inter_read(inter_0, buffer, buffer_size, &type_pkt);
-    if ((bytes_count == 0) || (type_pkt == HOST)) {
-      continue;
-    }
-    if (bytes_count == -1) {
-      fprintf(stderr, "Can't read interface %s\n", inter_0->name);
-      continue;
-    }
-
-    int res = inter_write(inter_1, buffer, bytes_count);
-    if (res == -1) {
-      fprintf(stderr, "Can't write interface %s\n", inter_1->name);
-    }
-  }
-  free(tunnel);
-
-  return NULL;
-}
-
-void bridge_init(struct bridge_t* bridge,
-                 const char* ifname_0,
-                 const char* ifname_1,
-                 clock_t timeout) {
-  inter_init(&bridge->inter_0, ifname_0, timeout);
-  inter_init(&bridge->inter_1, ifname_1, timeout);
-  bridge->terminated = false;
-}
-
-void bridge_close(struct bridge_t* bridge) {
-  bridge->terminated = false;
-
-  pthread_join(bridge->inter_0.thread, NULL);
-  pthread_join(bridge->inter_1.thread, NULL);
-
-  inter_close(&bridge->inter_0);
-  inter_close(&bridge->inter_1);
-}
-
-int bridge_open(struct bridge_t* bridge) {
-  int res = 0;
-  res = inter_open(&bridge->inter_0);
-  if (res == -1) {
-    fprintf(stderr, "Can't open interface %s\n", bridge->inter_0.name);
-    return -1;
-  }
-  res = inter_open(&bridge->inter_1);
-  if (res == -1) {
-    fprintf(stderr, "Can't open interface %s\n", bridge->inter_1.name);
-    return -1;
-  }
-
-  return 0;
-}
-
-void bridge_run(struct bridge_t* bridge) {
-  struct bridge_tunnel_t* tunnel = malloc(sizeof(*tunnel));
-  tunnel->inter_0 = &bridge->inter_0;
-  tunnel->inter_1 = &bridge->inter_1;
-  tunnel->terminated = &bridge->terminated;
-  pthread_create(&bridge->inter_0.thread, NULL, inter_swap_ptk, tunnel);
-
-  tunnel = malloc(sizeof(*tunnel));
-  tunnel->inter_0 = &bridge->inter_1;
-  tunnel->inter_1 = &bridge->inter_0;
-  tunnel->terminated = &bridge->terminated;
-  pthread_create(&bridge->inter_1.thread, NULL, inter_swap_ptk, tunnel);
 }

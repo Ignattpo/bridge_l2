@@ -1,6 +1,13 @@
-#include "bridge.h"
+#include "client.h"
+#include "local.h"
+#include "server.h"
 
 #include <signal.h>
+#include <string.h>
+#include <unistd.h>
+
+#define ADDR "localhost"
+#define PORT 8214
 
 static volatile bool terminated = 0;
 
@@ -18,30 +25,80 @@ static void signals_init(void) {
   sigaction(SIGINT, &sa_hup, 0);
 }
 
-int main(int argc, const char** argv) {
-  if (argc < 3) {
-    fprintf(stderr, "Usage: bridge_l2 <if1> <if2>\n");
+static int server_bridge(const char* inter_name,
+                         const char* name_addr,
+                         int port) {
+  struct server_t* server = server_init(inter_name, name_addr, port);
+  if (!server) {
+    fprintf(stderr, "ERROR > server_bridge server_init.\n");
     return 1;
   }
 
-  if (geteuid() != 0) {
-    fprintf(stderr, "You must be root!\n");
+  int res = 0;
+  res = server_run(server);
+  if (res == -1) {
+    fprintf(stderr, "ERROR > server_bridge server_run.\n");
     return 1;
   }
 
-  const char* inter_0 = argv[1];
-  const char* inter_1 = argv[2];
+  printf("bridging %s <=> %s:%d \n", inter_name, name_addr, port);
+
+  while (!terminated) {
+    sleep(1);
+  }
+
+  res = server_stop(server);
+
+  if (res == -1) {
+    fprintf(stderr, "ERROR > server_stop.\n");
+    return 1;
+  }
+
+  server_free(server);
+
+  return 0;
+}
+static int client_bridge(const char* inter_name,
+                         const char* serv_addr,
+                         int serv_port) {
+  struct client_t* client = client_init(inter_name, serv_addr, serv_port);
+  if (!client) {
+    fprintf(stderr, "ERROR > client_bridge client_init.\n");
+    return 1;
+  }
+
+  int res = 0;
+  res = client_run(client);
+  if (res == -1) {
+    fprintf(stderr, "ERROR > client_bridge client_run.\n");
+    return 1;
+  }
+
+  printf("bridging %s <=> %s:%d \n", inter_name, serv_addr, serv_port);
+  while (!terminated) {
+    sleep(1);
+  }
+
+  res = client_stop(client);
+  if (res == -1) {
+    fprintf(stderr, "ERROR > client_bridge client_stop.\n");
+    return 1;
+  }
+
+  client_free(client);
+
+  return 0;
+}
+
+static int local_bridge(const char* inter_0, const char* inter_1) {
   if (!strcmp(inter_0, inter_1)) {
     fprintf(stderr, "Interfaces must not equal. %s == %s \n", inter_0, inter_1);
     return 1;
   }
 
-  signals_init();
+  struct local_bridge_t* bridge = local_bridge_new(inter_0, inter_1, 1);
 
-  struct bridge_t bridge;
-  bridge_init(&bridge, inter_0, inter_1, 1);
-
-  int res = bridge_open(&bridge);
+  int res = local_bridge_open(bridge);
   if (res == -1) {
     fprintf(stderr, "Bridge can't open.\n");
     return 1;
@@ -49,11 +106,74 @@ int main(int argc, const char** argv) {
 
   printf("bridging %s <=> %s\n", inter_0, inter_1);
 
-  bridge_run(&bridge);
+  local_bridge_run(bridge);
   while (!terminated) {
     sleep(1);
   }
-  bridge_close(&bridge);
+  local_bridge_stop(bridge);
+  local_bridge_close(bridge);
+  local_bridge_free(bridge);
 
   return 0;
+}
+
+int main(int argc, const char** argv) {
+  if (geteuid() != 0) {
+    fprintf(stderr, "You must be root!\n");
+    return 1;
+  }
+
+  signals_init();
+
+  int res = 0;
+  if (!strcmp(argv[1], "server")) {
+    const char* inter_name = NULL;
+    const char* name_addr = ADDR;
+    int port = PORT;
+
+    if (argc < 3) {
+      fprintf(stderr, "Not set name interface\n");
+      return 1;
+    }
+
+    if (argc >= 3) {
+      inter_name = argv[2];
+    }
+    if (argc >= 4) {
+      name_addr = argv[3];
+    }
+    if (argc >= 5) {
+      port = atoi(argv[4]);
+    }
+
+    res = server_bridge(inter_name, name_addr, port);
+  } else if (!strcmp(argv[1], "client")) {
+    const char* inter_name = NULL;
+    const char* server_addr = ADDR;
+    int server_port = PORT;
+
+    if (argc < 3) {
+      fprintf(stderr, "Not set name interface\n");
+      return 1;
+    }
+
+    if (argc >= 3) {
+      inter_name = argv[2];
+    }
+    if (argc >= 4) {
+      server_addr = argv[3];
+    }
+    if (argc >= 5) {
+      server_port = atoi(argv[4]);
+    }
+
+    res = client_bridge(inter_name, server_addr, server_port);
+  } else {
+    if (argc < 3) {
+      fprintf(stderr, "Usage: bridge_l2 <if1> <if2>\n");
+      return 1;
+    }
+    res = local_bridge(argv[1], argv[2]);
+  }
+  return res;
 }
