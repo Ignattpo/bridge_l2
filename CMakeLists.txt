@@ -12,10 +12,8 @@ add_executable(bridge_l2
     main.c
     local.c
     local.h
-    client.c
-    client.h
-    server.c
-    server.h
+    remote.c
+    remote.h
     interface.c
     interface.h)
 

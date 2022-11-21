@@ -1,6 +1,5 @@
-#include "client.h"
 #include "local.h"
-#include "server.h"
+#include "remote.h"
 
 #include <signal.h>
 #include <string.h>
@@ -28,7 +27,7 @@ static void signals_init(void) {
 static int server_bridge(const char* inter_name,
                          const char* name_addr,
                          int port) {
-  struct server_t* server = server_init(inter_name, name_addr, port);
+  struct remote_t* server = server_init(inter_name, name_addr, port);
   if (!server) {
     fprintf(stderr, "ERROR > server_bridge server_init.\n");
     return 1;
@@ -47,13 +46,7 @@ static int server_bridge(const char* inter_name,
     sleep(1);
   }
 
-  res = server_stop(server);
-
-  if (res == -1) {
-    fprintf(stderr, "ERROR > server_stop.\n");
-    return 1;
-  }
-
+  server_stop(server);
   server_free(server);
 
   return 0;
@@ -61,7 +54,7 @@ static int server_bridge(const char* inter_name,
 static int client_bridge(const char* inter_name,
                          const char* serv_addr,
                          int serv_port) {
-  struct client_t* client = client_init(inter_name, serv_addr, serv_port);
+  struct remote_t* client = client_init(inter_name, serv_addr, serv_port);
   if (!client) {
     fprintf(stderr, "ERROR > client_bridge client_init.\n");
     return 1;
@@ -79,12 +72,7 @@ static int client_bridge(const char* inter_name,
     sleep(1);
   }
 
-  res = client_stop(client);
-  if (res == -1) {
-    fprintf(stderr, "ERROR > client_bridge client_stop.\n");
-    return 1;
-  }
-
+  client_stop(client);
   client_free(client);
 
   return 0;

@@ -10,15 +10,17 @@ struct bridge_tunnel_t {
 };
 
 void* inter_swap_ptk(void* thread_data) {
+  fprintf(stderr, "%s %d\n", __FUNCTION__, __LINE__);
   struct bridge_tunnel_t* tunnel = thread_data;
   struct interface_bridge_t* inter_0 = tunnel->inter_0;
   struct interface_bridge_t* inter_1 = tunnel->inter_1;
+  bool* terminated = tunnel->terminated;
   free(tunnel);
 
   enum type_pkt_t type_pkt = UNKNOWN;
   uint8_t buffer[64 * 1024];
   size_t buffer_size = sizeof(buffer);
-  while (*tunnel->terminated) {
+  while (!*terminated) {
     int bytes_count = inter_read(inter_0, buffer, buffer_size, &type_pkt);
     if ((bytes_count == 0) || (type_pkt == HOST)) {
       continue;
