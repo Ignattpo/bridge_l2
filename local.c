@@ -1,7 +1,12 @@
-#include <net/if.h>
-#include <sys/ioctl.h>
-
 #include "local.h"
+
+#include <inttypes.h>
+#include <net/if.h>
+#include <netinet/in.h>
+#include <stdint.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <sys/types.h>
 
 struct bridge_tunnel_t {
   struct interface_bridge_t* inter_0;

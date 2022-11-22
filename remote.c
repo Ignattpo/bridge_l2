@@ -1,42 +1,115 @@
 #include "remote.h"
 
 #include <errno.h>
+#include <fcntl.h>
+#include <inttypes.h>
+#include <linux/if_arp.h>
+#include <linux/if_tun.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/udp.h>
 #include <signal.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 
-static int remote_run(struct remote_t* remote);
-
-static void* sendto_thread(void* thread_data) {
-  struct remote_t* remote = thread_data;
+static void* server_sendto_thread(void* thread_data) {
+  struct server_t* server = thread_data;
+  struct base_t* base = &server->base;
 
   enum type_pkt_t type_pkt = UNKNOWN;
   uint8_t buffer[1600];
   size_t buffer_size = sizeof(buffer);
-  while (!remote->terminated) {
+  while (!base->terminated) {
+    ssize_t bytes_count = read(server->fd, buffer, buffer_size);
+    if (bytes_count == 0) {
+      continue;
+    }
+    if (bytes_count == -1) {
+      fprintf(stderr, "ERROR>%s read \n", __FUNCTION__);
+      perror("read:");
+      continue;
+    }
+
+    int res = sendto(base->socket, buffer, bytes_count, 0,
+                     (struct sockaddr*)&base->sock_addr, base->addr_len);
+    if (res == -1) {
+      fprintf(stderr, "ERROR> %s can't send addr %s:%d\n", __FUNCTION__,
+              inet_ntoa(base->sock_addr.sin_addr), base->sock_addr.sin_port);
+      perror("sendto:");
+    }
+  }
+
+  return 0;
+}
+
+static void* server_recv_thread(void* thread_data) {
+  struct server_t* server = thread_data;
+  struct base_t* base = &server->base;
+
+  uint8_t buffer[1600];
+  size_t buffer_size = sizeof(buffer);
+  struct sockaddr_in addr;
+  socklen_t addrlen;
+  while (!base->terminated) {
+    ssize_t bytes_count = recvfrom(base->socket, buffer, buffer_size, 0,
+                                   (struct sockaddr*)&addr, &addrlen);
+    if (bytes_count == -1) {
+      fprintf(stderr, "ERROR> %s recvfrom %s\n", __FUNCTION__, base->name_addr);
+      continue;
+    }
+
+    if (memcmp(&addr, (struct sockaddr*)&base->sock_addr, addrlen)) {
+      //      fprintf(stderr,
+      //              "ERROR> %s package incorrect source address received:%s:%d
+      //              " "expected:%s:%d\n",
+      //              __FUNCTION__, inet_ntoa(addr.sin_addr), addr.sin_port,
+      //              inet_ntoa(base->sock_addr.sin_addr),
+      //              base->sock_addr.sin_port);
+      continue;
+    }
+
+    bytes_count = write(server->fd, buffer, bytes_count);
+    if (bytes_count == -1) {
+      fprintf(stderr, "ERROR>%s write \n", __FUNCTION__);
+      perror("write:");
+      continue;
+    }
+  }
+
+  return 0;
+}
+
+static void* sendto_thread(void* thread_data) {
+  struct client_t* client = thread_data;
+  struct base_t* base = &client->base;
+
+  enum type_pkt_t type_pkt = UNKNOWN;
+  uint8_t buffer[1600];
+  size_t buffer_size = sizeof(buffer);
+  while (!base->terminated) {
     ssize_t bytes_count =
-        inter_read(&remote->inter, buffer, buffer_size, &type_pkt);
+        inter_read(&client->inter, buffer, buffer_size, &type_pkt);
     if ((bytes_count == 0) || (type_pkt == HOST)) {
       continue;
     }
     if (bytes_count == -1) {
       fprintf(stderr, "ERROR>%s inter_read %s\n", __FUNCTION__,
-              remote->inter.name);
+              client->inter.name);
       continue;
     }
 
-    int res = sendto(remote->socket, buffer, bytes_count, 0,
-                     (struct sockaddr*)&remote->sock_addr, remote->addr_len);
+    int res = sendto(base->socket, buffer, bytes_count, 0,
+                     (struct sockaddr*)&base->sock_addr, base->addr_len);
     if (res == -1) {
       fprintf(stderr, "ERROR> %s can't send addr %s:%d\n", __FUNCTION__,
-              inet_ntoa(remote->sock_addr.sin_addr),
-              remote->sock_addr.sin_port);
+              inet_ntoa(base->sock_addr.sin_addr), base->sock_addr.sin_port);
       perror("sendto:");
     }
   }
@@ -45,35 +118,35 @@ static void* sendto_thread(void* thread_data) {
 }
 
 static void* recv_thread(void* thread_data) {
-  struct remote_t* remote = thread_data;
+  struct client_t* client = thread_data;
+  struct base_t* base = &client->base;
 
   uint8_t buffer[1600];
   size_t buffer_size = sizeof(buffer);
   struct sockaddr_in addr;
   socklen_t addrlen;
-  while (!remote->terminated) {
-    ssize_t bytes_count = recvfrom(remote->socket, buffer, buffer_size, 0,
+  while (!base->terminated) {
+    ssize_t bytes_count = recvfrom(base->socket, buffer, buffer_size, 0,
                                    (struct sockaddr*)&addr, &addrlen);
     if (bytes_count == -1) {
-      fprintf(stderr, "ERROR> %s recvfrom %s\n", __FUNCTION__,
-              remote->name_addr);
+      fprintf(stderr, "ERROR> %s recvfrom %s\n", __FUNCTION__, base->name_addr);
       continue;
     }
 
-    if (memcmp(&addr, (struct sockaddr*)&remote->sock_addr, addrlen)) {
-      fprintf(stderr,
-              "ERROR> %s package incorrect source address received:%s:%d "
-              "expected:%s:%d\n",
-              __FUNCTION__, inet_ntoa(addr.sin_addr), addr.sin_port,
-              inet_ntoa(remote->sock_addr.sin_addr),
-              remote->sock_addr.sin_port);
+    if (memcmp(&addr, (struct sockaddr*)&base->sock_addr, addrlen)) {
+      //      fprintf(stderr,
+      //              "ERROR> %s package incorrect source address received:%s:%d
+      //              " "expected:%s:%d\n",
+      //              __FUNCTION__, inet_ntoa(addr.sin_addr), addr.sin_port,
+      //              inet_ntoa(base->sock_addr.sin_addr),
+      //              base->sock_addr.sin_port);
       continue;
     }
 
-    int res = inter_write(&remote->inter, buffer, buffer_size);
+    int res = inter_write(&client->inter, buffer, bytes_count);
     if (res == -1) {
       fprintf(stderr, "ERROR> %s inter_write %s\n", __FUNCTION__,
-              remote->inter.name);
+              client->inter.name);
     }
   }
 
@@ -81,7 +154,7 @@ static void* recv_thread(void* thread_data) {
 }
 
 static void* wait_for_client_thread(void* thread_data) {
-  struct remote_t* server = thread_data;
+  struct server_t* server = thread_data;
 
   uint8_t buffer[1600];
   size_t buffer_size = sizeof(buffer);
@@ -89,147 +162,192 @@ static void* wait_for_client_thread(void* thread_data) {
   struct sockaddr_in src_addr;
   socklen_t addrlen = sizeof(src_addr);
 
-  ssize_t bytes_count = recvfrom(server->socket, buffer, buffer_size, 0,
+  ssize_t bytes_count = recvfrom(server->base.socket, buffer, buffer_size, 0,
                                  (struct sockaddr*)&src_addr, &addrlen);
   if (bytes_count == -1) {
     fprintf(stderr, "ERROR> %s can't recvfrom\n", __FUNCTION__);
     return 0;
   }
 
-  int res = inter_write(&server->inter, buffer, buffer_size);
-  if (res == -1) {
-    fprintf(stderr, "ERROR> %s inter_write %s\n", __FUNCTION__,
-            server->inter.name);
+  struct base_t* base = &server->base;
+
+  base->addr_len = addrlen;
+  memcpy(&base->sock_addr, &src_addr, addrlen);
+
+  //  TODO запись в интерфейс server
+
+  bytes_count = write(server->fd, buffer, bytes_count);
+  if (bytes_count == -1) {
+    fprintf(stderr, "ERROR>%s write \n", __FUNCTION__);
+    perror("write:");
   }
 
-  server->addr_len = addrlen;
-  memcpy(&server->sock_addr, &src_addr, addrlen);
+  int res =
+      pthread_create(&base->read_thread, NULL, server_recv_thread, server);
+  if (res != 0) {
+    fprintf(stderr,
+            "ERROR> %s pthread_create recv_thread addres: %s port: %d \n",
+            __FUNCTION__, base->name_addr, base->port);
+    return 0;
+  }
 
-  remote_run(server);
+  res = pthread_create(&base->write_thread, NULL, server_sendto_thread, server);
+  if (res != 0) {
+    fprintf(stderr,
+            "ERROR> %s pthread_create sendto_thread addres: %s port: %d \n",
+            __FUNCTION__, base->name_addr, base->port);
+    return 0;
+  }
 
   return 0;
 }
 
-static struct remote_t* remote_init(const char* inter_name,
-                                    const char* addr,
-                                    int server_port) {
-  struct remote_t* remote = malloc(sizeof(*remote));
-  if (!remote) {
-    fprintf(stderr, "ERROR> %s malloc %s\n", __FUNCTION__, addr);
-    return NULL;
+static int base_init(struct base_t* base, const char* addr, int server_port) {
+  int base_socket = socket(AF_INET, SOCK_DGRAM, 0);
+  if (base_socket < 0) {
+    return -1;
   }
 
-  int remote_socket = socket(AF_INET, SOCK_DGRAM, 0);
-  if (remote_socket < 0) {
-    goto aborting;
-  }
-
-  remote->name_addr = strdup(addr);
-  remote->port = server_port;
-  remote->socket = remote_socket;
-  remote->terminated = false;
-  remote->addr_len = sizeof(remote->sock_addr);
-  remote->read_thread = 0;
-  remote->wait_thread = 0;
-  remote->write_thread = 0;
-
-  inter_init(&remote->inter, inter_name, 1);
-  int res = inter_open(&remote->inter);
-  if (res == -1) {
-    goto aborting_socket;
-  }
+  base->name_addr = strdup(addr);
+  base->port = server_port;
+  base->socket = base_socket;
+  base->terminated = false;
+  base->addr_len = sizeof(base->sock_addr);
+  base->read_thread = 0;
+  base->write_thread = 0;
 
   struct hostent* hosten = gethostbyname(addr);
   if (!hosten) {
     fprintf(stderr, "ERROR> %s gethostbyname", __FUNCTION__);
-    return NULL;
+    return -1;
   }
 
   struct in_addr** addr_list = (struct in_addr**)hosten->h_addr_list;
   if (addr_list[0] == NULL) {
     fprintf(stderr, "ERROR> %s incorrect addres %s\n", __FUNCTION__, addr);
-    return NULL;
+    return -1;
   }
 
-  remote->sock_addr.sin_family = AF_INET;
-  remote->sock_addr.sin_port = htons(server_port);
-  remote->sock_addr.sin_addr = *addr_list[0];
-
-  return remote;
-
-aborting_socket:
-  close(remote_socket);
-  free(remote->name_addr);
-aborting:
-  free(remote);
-
-  return NULL;
-}
-
-static int remote_run(struct remote_t* remote) {
-  int res = pthread_create(&remote->read_thread, NULL, recv_thread, remote);
-  if (res != 0) {
-    fprintf(stderr,
-            "ERROR> %s pthread_create recv_thread addres: %s port: %d \n",
-            __FUNCTION__, remote->name_addr, remote->port);
-  }
-
-  res = pthread_create(&remote->write_thread, NULL, sendto_thread, remote);
-  if (res != 0) {
-    fprintf(stderr,
-            "ERROR> %s pthread_create sendto_thread addres: %s port: %d \n",
-            __FUNCTION__, remote->name_addr, remote->port);
-  }
+  base->sock_addr.sin_family = AF_INET;
+  base->sock_addr.sin_port = htons(server_port);
+  base->sock_addr.sin_addr = *addr_list[0];
 
   return 0;
 }
 
-static void remote_stop(struct remote_t* remote) {
-  remote->terminated = true;
+static void base_stop(struct base_t* base) {
+  base->terminated = true;
 
-  pthread_cancel(remote->read_thread);
-  pthread_cancel(remote->write_thread);
+  pthread_cancel(base->read_thread);
+  pthread_cancel(base->write_thread);
 
-  pthread_join(remote->read_thread, NULL);
-  pthread_join(remote->write_thread, NULL);
+  pthread_join(base->read_thread, NULL);
+  pthread_join(base->write_thread, NULL);
 }
 
-static void remote_free(struct remote_t* remote) {
-  free(remote->name_addr);
-  free(remote);
+static void base_free(struct base_t* base) {
+  free(base->name_addr);
 }
 
-struct remote_t* client_init(const char* inter_name,
+struct client_t* client_init(const char* inter_name,
                              const char* server_addr,
                              int server_port) {
-  return remote_init(inter_name, server_addr, server_port);
+  struct client_t* client = malloc(sizeof(*client));
+  if (!client) {
+    fprintf(stderr, "ERROR> %s malloc %s\n", __FUNCTION__, server_addr);
+    return NULL;
+  }
+  int res = base_init(&client->base, server_addr, server_port);
+  if (res == -1) {
+    goto aborting;
+  }
+
+  inter_init(&client->inter, inter_name, 1);
+  res = inter_open(&client->inter);
+  if (res == -1) {
+    goto aborting;
+  }
+
+  return client;
+
+aborting:
+  close(client->base.socket);
+  base_free(&client->base);
+  free(client);
+
+  return NULL;
 }
 
-struct remote_t* server_init(const char* inter_name,
+struct server_t* server_init(const char* inter_name,
                              const char* name_addr,
                              int port) {
-  struct remote_t* server = remote_init(inter_name, name_addr, port);
+  struct server_t* server = malloc(sizeof(*server));
   if (!server) {
+    fprintf(stderr, "ERROR> %s malloc %s\n", __FUNCTION__, name_addr);
     return NULL;
   }
 
-  int res = bind(server->socket, (struct sockaddr*)&server->sock_addr,
-                 server->addr_len);
+  int res = base_init(&server->base, name_addr, port);
+  if (res == -1) {
+    goto aborting;
+  }
+
+  res = bind(server->base.socket, (struct sockaddr*)&server->base.sock_addr,
+             server->base.addr_len);
   if (res != 0) {
     fprintf(stderr, "ERROR> %s bind", __FUNCTION__);
-    remote_free(server);
-    return NULL;
+    goto aborting;
+  }
+  server->wait_thread = 0;
+  //  TODO настройка интерфейса server
+
+  server->fd = open("/dev/net/tun", O_RDWR);
+  if (server->fd == -1) {
+    fprintf(stderr, "ERROR> %s open", __FUNCTION__);
+    goto aborting;
+  }
+
+  struct ifreq ifr = {0};
+  ifr.ifr_flags = IFF_TAP | IFF_NO_PI;
+  strncpy(ifr.ifr_name, inter_name, IFNAMSIZ);
+  res = ioctl(server->fd, TUNSETIFF, &ifr);
+  if (res == -1) {
+    fprintf(stderr, "ERROR> %s ioctl", __FUNCTION__);
+    goto aborting;
   }
 
   return server;
+
+aborting:
+  close(server->base.socket);
+  base_free(&server->base);
+  free(server);
+
+  return NULL;
 }
 
-int client_run(struct remote_t* client) {
-  int res = remote_run(client);
+int client_run(struct client_t* client) {
+  struct base_t* base = &client->base;
+  int res = pthread_create(&base->read_thread, NULL, recv_thread, client);
+  if (res != 0) {
+    fprintf(stderr,
+            "ERROR> %s pthread_create recv_thread addres: %s port: %d \n",
+            __FUNCTION__, base->name_addr, base->port);
+    return res;
+  }
+
+  res = pthread_create(&base->write_thread, NULL, sendto_thread, client);
+  if (res != 0) {
+    fprintf(stderr,
+            "ERROR> %s pthread_create sendto_thread addres: %s port: %d \n",
+            __FUNCTION__, base->name_addr, base->port);
+    return res;
+  }
+
   return res;
 }
 
-int server_run(struct remote_t* server) {
+int server_run(struct server_t* server) {
   int res = pthread_create(&server->wait_thread, NULL, wait_for_client_thread,
                            server);
   if (res != 0) {
@@ -240,27 +358,28 @@ int server_run(struct remote_t* server) {
   return 0;
 }
 
-void server_stop(struct remote_t* server) {
-  remote_stop(server);
+void server_stop(struct server_t* server) {
+  base_stop(&server->base);
 
   pthread_cancel(server->wait_thread);
   pthread_join(server->wait_thread, NULL);
 
-  close(server->socket);
-  inter_close(&server->inter);
+  close(server->base.socket);
 }
 
-void client_stop(struct remote_t* client) {
-  remote_stop(client);
+void client_stop(struct client_t* client) {
+  base_stop(&client->base);
 
-  close(client->socket);
+  close(client->base.socket);
   inter_close(&client->inter);
 }
 
-void server_free(struct remote_t* server) {
-  remote_free(server);
+void server_free(struct server_t* server) {
+  base_free(&server->base);
+  free(server);
 }
 
-void client_free(struct remote_t* client) {
-  remote_free(client);
+void client_free(struct client_t* client) {
+  base_free(&client->base);
+  free(client);
 }

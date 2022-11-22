@@ -1,8 +1,13 @@
 #include "interface.h"
 
+#include <inttypes.h>
 #include <net/if.h>
+#include <netinet/in.h>
+#include <stdint.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 void inter_init(struct interface_bridge_t* inter,
