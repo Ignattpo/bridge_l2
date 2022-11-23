@@ -23,9 +23,9 @@ static void* server_sendto_thread(void* thread_data) {
   struct server_t* server = thread_data;
   struct base_t* base = &server->base;
 
-  enum type_pkt_t type_pkt = UNKNOWN;
   uint8_t buffer[1600];
   size_t buffer_size = sizeof(buffer);
+
   while (!base->terminated) {
     ssize_t bytes_count = read(server->fd, buffer, buffer_size);
     if (bytes_count == 0) {
@@ -56,7 +56,7 @@ static void* server_recv_thread(void* thread_data) {
   uint8_t buffer[1600];
   size_t buffer_size = sizeof(buffer);
   struct sockaddr_in addr;
-  socklen_t addrlen;
+  socklen_t addrlen = 0;
   while (!base->terminated) {
     ssize_t bytes_count = recvfrom(base->socket, buffer, buffer_size, 0,
                                    (struct sockaddr*)&addr, &addrlen);
@@ -66,12 +66,16 @@ static void* server_recv_thread(void* thread_data) {
     }
 
     if (memcmp(&addr, (struct sockaddr*)&base->sock_addr, addrlen)) {
-      //      fprintf(stderr,
-      //              "ERROR> %s package incorrect source address received:%s:%d
-      //              " "expected:%s:%d\n",
-      //              __FUNCTION__, inet_ntoa(addr.sin_addr), addr.sin_port,
-      //              inet_ntoa(base->sock_addr.sin_addr),
-      //              base->sock_addr.sin_port);
+      //        inet_ntoa создает статический буффер в который записывается
+      //        строка адресса повторный вызов inet_ntoa перезаписывает этот
+      //        буффер поэтому вывод ошибки разбит на 2 функции. вызывает
+      //        опасение использование этой функции внутри потока, но другого
+      //        варианта приведения адресса не нашел.
+      fprintf(stderr,
+              "ERROR> %s package incorrect source address received:%s:%d ",
+              __FUNCTION__, inet_ntoa(addr.sin_addr), addr.sin_port);
+      fprintf(stderr, "expected:%s:%d\n ", inet_ntoa(base->sock_addr.sin_addr),
+              base->sock_addr.sin_port);
       continue;
     }
 
@@ -134,12 +138,16 @@ static void* recv_thread(void* thread_data) {
     }
 
     if (memcmp(&addr, (struct sockaddr*)&base->sock_addr, addrlen)) {
-      //      fprintf(stderr,
-      //              "ERROR> %s package incorrect source address received:%s:%d
-      //              " "expected:%s:%d\n",
-      //              __FUNCTION__, inet_ntoa(addr.sin_addr), addr.sin_port,
-      //              inet_ntoa(base->sock_addr.sin_addr),
-      //              base->sock_addr.sin_port);
+      //        inet_ntoa создает статический буффер в который записывается
+      //        строка адресса повторный вызов inet_ntoa перезаписывает этот
+      //        буффер поэтому вывод ошибки разбит на 2 функции. вызывает
+      //        опасение использование этой функции внутри потока, но другого
+      //        варианта приведения адресса не нашел.
+      fprintf(stderr,
+              "ERROR> %s package incorrect source address received:%s:%d ",
+              __FUNCTION__, inet_ntoa(addr.sin_addr), addr.sin_port);
+      fprintf(stderr, "expected:%s:%d\n ", inet_ntoa(base->sock_addr.sin_addr),
+              base->sock_addr.sin_port);
       continue;
     }
 
@@ -159,22 +167,14 @@ static void* wait_for_client_thread(void* thread_data) {
   uint8_t buffer[1600];
   size_t buffer_size = sizeof(buffer);
 
-  struct sockaddr_in src_addr;
-  socklen_t addrlen = sizeof(src_addr);
-
-  ssize_t bytes_count = recvfrom(server->base.socket, buffer, buffer_size, 0,
-                                 (struct sockaddr*)&src_addr, &addrlen);
+  struct base_t* base = &server->base;
+  ssize_t bytes_count =
+      recvfrom(server->base.socket, buffer, buffer_size, 0,
+               (struct sockaddr*)&base->sock_addr, &base->addr_len);
   if (bytes_count == -1) {
     fprintf(stderr, "ERROR> %s can't recvfrom\n", __FUNCTION__);
     return 0;
   }
-
-  struct base_t* base = &server->base;
-
-  base->addr_len = addrlen;
-  memcpy(&base->sock_addr, &src_addr, addrlen);
-
-  //  TODO запись в интерфейс server
 
   bytes_count = write(server->fd, buffer, bytes_count);
   if (bytes_count == -1) {
@@ -218,7 +218,7 @@ static int base_init(struct base_t* base, const char* addr, int server_port) {
 
   struct hostent* hosten = gethostbyname(addr);
   if (!hosten) {
-    fprintf(stderr, "ERROR> %s gethostbyname", __FUNCTION__);
+    fprintf(stderr, "ERROR> %s gethostbyname\n", __FUNCTION__);
     return -1;
   }
 
@@ -252,6 +252,16 @@ static void base_free(struct base_t* base) {
 struct client_t* client_init(const char* inter_name,
                              const char* server_addr,
                              int server_port) {
+  if ((strlen(inter_name) >= 4) && (inter_name[0] == 't') &&
+      (inter_name[1] == 'a') && (inter_name[2] == 'p')) {
+    fprintf(stderr, "ERROR>client not expects tap(%s) interface\n", inter_name);
+    return NULL;
+  }
+  if ((strlen(inter_name) >= 4) && (inter_name[0] == 't') &&
+      (inter_name[1] == 'u') && (inter_name[2] == 'n')) {
+    fprintf(stderr, "ERROR>client not expects tun(%s) interface\n", inter_name);
+    return NULL;
+  }
   struct client_t* client = malloc(sizeof(*client));
   if (!client) {
     fprintf(stderr, "ERROR> %s malloc %s\n", __FUNCTION__, server_addr);
@@ -281,6 +291,12 @@ aborting:
 struct server_t* server_init(const char* inter_name,
                              const char* name_addr,
                              int port) {
+  if ((strlen(inter_name) < 4) || (inter_name[0] != 't') ||
+      (inter_name[1] != 'a') || (inter_name[2] != 'p')) {
+    fprintf(stderr, "ERROR>server expects tap(%s) interface\n", inter_name);
+    return NULL;
+  }
+
   struct server_t* server = malloc(sizeof(*server));
   if (!server) {
     fprintf(stderr, "ERROR> %s malloc %s\n", __FUNCTION__, name_addr);
