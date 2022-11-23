@@ -25,25 +25,6 @@ void inter_close(struct interface_bridge_t* inter) {
   }
 }
 
-static int get_mac(struct interface_bridge_t* inter) {
-  int s;
-  struct ifreq buffer;
-
-  s = socket(PF_INET, SOCK_DGRAM, 0);
-
-  memset(&buffer, 0x00, sizeof(buffer));
-
-  strcpy(buffer.ifr_name, inter->name);
-
-  ioctl(s, SIOCGIFHWADDR, &buffer);
-
-  close(s);
-
-  memcpy(inter->mac, buffer.ifr_hwaddr.sa_data, sizeof(inter->mac));
-
-  return 0;
-}
-
 static int min(size_t x, size_t y) {
   if (x <= y) {
     return x;
@@ -54,12 +35,6 @@ static int min(size_t x, size_t y) {
 int inter_open(struct interface_bridge_t* inter) {
   if (inter->pcap) {
     return 0;
-  }
-
-  if (get_mac(inter) < 0) {
-    fprintf(stderr, "ERROR> %s can't get mac for %s\n", __FUNCTION__,
-            inter->name);
-    return -1;
   }
 
   char eb[PCAP_ERRBUF_SIZE];
@@ -83,10 +58,7 @@ aborting:
   return -1;
 }
 
-int inter_read(struct interface_bridge_t* inter,
-               uint8_t* bytes,
-               size_t size,
-               enum type_pkt_t* type) {
+int inter_read(struct interface_bridge_t* inter, uint8_t* bytes, size_t size) {
   if (!inter->pcap || (bytes == 0) || (size == 0)) {
     return -1;
   }
@@ -99,27 +71,12 @@ int inter_read(struct interface_bridge_t* inter,
     return 0;
   }
 
-  if ((ret < 0) || (pkt_header->len < sizeof(inter->mac))) {
+  if (ret < 0) {
     return -1;
   }
 
   int bytes_count = min((size_t)pkt_header->len, size);
   memcpy(bytes, pkt_data, bytes_count);
-
-  uint8_t broadcast[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
-  uint8_t dst[6];
-  memcpy(&dst, bytes, sizeof(dst));
-
-  // Определяем тип сообщения по мас
-  if (memcmp(&dst, &inter->mac, sizeof(inter->mac)) == 0) {
-    *type = HOST;
-  } else if (memcmp(&dst, &broadcast, sizeof(dst)) == 0) {
-    *type = BROADCAST;
-  } else if (dst[0] == 0x1) {
-    *type = MULTICAST;
-  } else {
-    *type = OTHER;
-  }
 
   return bytes_count;
 }

@@ -94,13 +94,11 @@ static void* sendto_thread(void* thread_data) {
   struct client_t* client = thread_data;
   struct base_t* base = &client->base;
 
-  enum type_pkt_t type_pkt = UNKNOWN;
   uint8_t buffer[1600];
   size_t buffer_size = sizeof(buffer);
   while (!base->terminated) {
-    ssize_t bytes_count =
-        inter_read(&client->inter, buffer, buffer_size, &type_pkt);
-    if ((bytes_count == 0) || (type_pkt == HOST)) {
+    ssize_t bytes_count = inter_read(&client->inter, buffer, buffer_size);
+    if (bytes_count == 0) {
       continue;
     }
     if (bytes_count == -1) {
@@ -315,7 +313,6 @@ struct server_t* server_init(const char* inter_name,
     goto aborting;
   }
   server->wait_thread = 0;
-  //  TODO настройка интерфейса server
 
   server->fd = open("/dev/net/tun", O_RDWR);
   if (server->fd == -1) {
